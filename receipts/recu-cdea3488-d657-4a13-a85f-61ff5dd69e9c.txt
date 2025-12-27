@@ -1,0 +1,12 @@
+
+Réservation N°: cdea3488-d657-4a13-a85f-61ff5dd69e9c
+Client : michel onana
+Téléphone : 677337517
+Email : onanamichel364@gmail.com
+Type de séjour : nuit
+Durée : 1 nuit
+Du : Mon Dec 15 2025 03:22:28 GMT+0100 (heure normale d’Afrique de l’Ouest)
+Au : Tue Dec 16 2025 03:22:28 GMT+0100 (heure normale d’Afrique de l’Ouest)
+Prix total : 20000.00 FCFA
+Statut : validee
+  
