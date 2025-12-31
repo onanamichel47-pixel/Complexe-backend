@@ -19,15 +19,18 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+  methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
 const io = new Server(httpServer, {
-  cors: {
-    origin: "http://localhost:5173", // en prod: variable d'env / domaine du front
-    methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
-    credentials: true,
-  },
+  cors: corsOptions,
 });
 
-// Middleware Socket.io auth avec récupération et assignation de socket.user
+// Auth Socket.io
 io.use((socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
@@ -36,10 +39,8 @@ io.use((socket, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     socket.user = decoded;
 
-    // Room Superadmin si rôle superadmin
     if (decoded.role === "superadmin") {
       socket.join("superadmin");
-      console.log("👑 Superadmin rejoint room (via middleware)");
     }
     next();
   } catch (err) {
@@ -48,40 +49,30 @@ io.use((socket, next) => {
   }
 });
 
-// Écouteurs Socket.io
 io.on("connection", (socket) => {
   console.log("✅ Client connecté:", socket.id);
-
-  // Optionnel : join manuel (en plus de la détection automatique via le middleware)
-  socket.on("join-superadmin", () => {
-    if (socket.user?.role === "superadmin") {
-      socket.join("superadmin");
-      console.log("👑 Superadmin rejoint room (event join-superadmin)");
-    }
-  });
-
   socket.on("disconnect", () => {
     console.log("❌ Client déconnecté:", socket.id);
   });
 });
 
-// Passer io aux controllers (req.io)
+// Injecter io dans req
 app.use((req, res, next) => {
   req.io = io;
   next();
 });
 
-// Middlewares Express
+// Middlewares
+app.use(cors(corsOptions));
+app.use(helmet());
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use(compression());
 app.use(
-  cors({
-    origin: "http://localhost:5173", // en prod: domaine du front
-    credentials: true,
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 1000,
   })
 );
-app.use(helmet());
-app.use(morgan("dev"));
-app.use(compression());
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static("uploads"));
@@ -92,37 +83,41 @@ app.use("/api", routes);
 app.get("/", (req, res) =>
   res.json({
     message: "Backend NNOMO en ligne ✅",
-    socketio: true,
+    env: process.env.NODE_ENV,
   })
 );
 
-// Sync Cloudinary toutes les 10 minutes
-setInterval(syncPendingUploads, 10 * 60 * 1000);
+app.get("/health", async (req, res) => {
+  try {
+    await sequelize.authenticate();
+    res.json({ status: "ok" });
+  } catch (e) {
+    res.status(500).json({ status: "db_error", error: e.message });
+  }
+});
 
 const PORT = process.env.PORT || 5000;
 
 sequelize
   .authenticate()
-  .then(() => {
-    console.log("✅ Connexion MySQL réussie");
+  .then(async () => {
+    console.log("✅ DB connectée");
 
-    if (process.env.NODE_ENV === "production") {
-      console.log("🚫 Mode PRODUCTION : Aucun sync() appliqué");
-      return Promise.resolve();
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🔄 DEV: sequelize.sync()");
+      await sequelize.sync({ alter: true });
+    } else {
+      console.log("🚫 PROD: pas de sync() (migrations manuelles si besoin)");
+      // éventuellement lancer ton job cron + syncPendingUploads ici
+      setInterval(syncPendingUploads, 10 * 60 * 1000);
     }
 
-    console.log("🔄 Mode DEV : Synchronisation sécurisée...");
-    return sequelize.sync({ force: false, alter: false });
-  })
-  .then(() => {
-    console.log("🔒 Synchronisation terminée");
-    httpServer.listen(PORT, () => {
-      console.log(`🚀 Serveur + Socket.io sur http://localhost:${PORT}`);
-      console.log(`🔌 Socket.io rooms: superadmin`);
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Serveur sur port ${PORT}`);
     });
   })
   .catch((err) => {
-    console.error("💥 Erreur serveur:", err);
+    console.error("💥 Erreur démarrage:", err);
     process.exit(1);
   });
 
